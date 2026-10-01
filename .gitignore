@@ -1,0 +1,10 @@
+.DS_Store
+.build/
+build/
+.swiftpm/
+*.xcodeproj
+DerivedData/
+design_handoff_*/
+
+# Local only: personal assistant rules (CLAUDE.local.md is read by Claude Code, never committed)
+CLAUDE.local.md
