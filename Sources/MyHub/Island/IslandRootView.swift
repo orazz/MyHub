@@ -35,6 +35,18 @@ struct IslandRootView: View {
         return CGPoint(x: rect.minX, y: metrics.windowSize.height - rect.maxY)
     }
 
+    /// The open outline the shadow is drawn for.
+    private func shadowKey(side: Bool) -> PanelShadow.Key {
+        let open = session.openBodySize
+        let top = HubTheme.Radius.openTop
+        return PanelShadow.Key(
+            width: open.width + (side ? 0 : 2 * top), height: open.height + (side ? 2 * top : 0),
+            topRadius: top, bottomRadius: HubTheme.Radius.openBottom,
+            position: session.metrics.position, offsetY: side ? 10 : 20,
+            scale: session.metrics.screen.backingScaleFactor
+        )
+    }
+
     private var shape: IslandShape {
         IslandShape(
             topRadius: topRadius,
@@ -87,6 +99,10 @@ struct IslandRootView: View {
                 FocusLiveView(focus: model.focus, gap: side ? 8 : session.metrics.notch.width)
                     .frame(width: size.width, height: size.height)
                     .transition(.opacity.animation(HubTheme.Motion.contentOut))
+            } else if session.showsAgents {
+                AgentLiveView(agents: model.agents, gap: side ? 8 : session.metrics.notch.width)
+                    .frame(width: size.width, height: size.height)
+                    .transition(.opacity.animation(HubTheme.Motion.contentOut))
             } else if session.showsBadge {
                 InboxBadgeView(count: model.inbox.badgeCount, side: side)
                     .frame(width: size.width, height: size.height)
@@ -98,12 +114,14 @@ struct IslandRootView: View {
         // The shadow is the costliest thing to animate — a 25pt blur redrawn
         // every frame the outline changes. It arrives once the panel has
         // settled and leaves the instant it starts to close.
-        .background(
-            shape.fill(Color.black)
-                .shadow(color: .black.opacity(0.45), radius: 25, y: side ? 10 : 20)
-                .opacity(isOpen ? 1 : 0)
-                .animation(isOpen ? HubTheme.Motion.shadowIn : nil, value: isOpen)
-        )
+        .background {
+            // Drawn once per size as an image (PanelShadow); only shown open,
+            // where the outline is fixed.
+            if isOpen {
+                PanelShadowView(key: shadowKey(side: side))
+                    .transition(.asymmetric(insertion: .opacity.animation(HubTheme.Motion.shadowIn), removal: .identity))
+            }
+        }
         .offset(x: origin.x - (side ? 0 : topRadius), y: origin.y - (side ? topRadius : 0))
         .frame(width: session.metrics.windowSize.width, height: session.metrics.windowSize.height, alignment: .topLeading)
         // A soft spring out, a quicker critically-damped return — closing
@@ -112,6 +130,7 @@ struct IslandRootView: View {
         .animation(HubTheme.Motion.open, value: session.flash)
         .animation(HubTheme.Motion.open, value: session.showsFocus)
         .animation(HubTheme.Motion.open, value: session.showsBadge)
+        .animation(HubTheme.Motion.open, value: session.showsAgents)
         .environment(\.colorScheme, .dark)
         .environment(model.drafts)
     }
@@ -141,7 +160,7 @@ struct SectionPane: View {
     var body: some View {
         switch model.section {
         case .stash:
-            StashView(stash: model.stash, session: session)
+            StashView(stash: model.stash, session: session, onFormActive: { model.formActive = $0 })
         case .clipboard:
             ClipboardView(clipboard: model.clipboard, shield: model.shield, session: session, onPaste: { model.pasteAndClose() })
         case .calendar:
@@ -153,6 +172,8 @@ struct SectionPane: View {
                            useSnippet: { model.useSnippet($0, paste: $1) })
         case .focus:
             FocusView(focus: model.focus, session: session, onFormActive: { model.formActive = $0 })
+        case .agents:
+            AgentsView(agents: model.agents, shield: model.shield)
         case .inbox:
             InboxView(inbox: model.inbox, shield: model.shield, session: session) { target in
                 if target == .dev { model.dev.page = .git }

@@ -24,10 +24,50 @@ enum XcodeBuilds {
     static func recentBuilds(in root: URL = derivedData, limit: Int = 4) -> [BuildRecord] {
         let projects = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
         return projects
-            .flatMap { records(fromManifestAt: $0.appendingPathComponent("Logs/Build/LogStoreManifest.plist")) }
+            .flatMap { manifestCache.records(at: $0.appendingPathComponent("Logs/Build/LogStoreManifest.plist")) }
             .sorted { $0.finished > $1.finished }
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// Parsed manifests, by path, reused until the file's modification date
+    /// or size changes — the poll runs every few seconds and Xcode rewrites a
+    /// manifest only when a build ends.
+    static let manifestCache = ManifestCache()
+
+    final class ManifestCache: @unchecked Sendable {
+        // Guarded by `lock`; polls can overlap on different threads.
+        private let lock = NSLock()
+        private var entries: [String: (stamp: Stamp, records: [BuildRecord])] = [:]
+        private var changes = 0
+
+        /// Goes up whenever a manifest had to be (re)parsed; unchanged means
+        /// every build Xcode knows of has been seen before.
+        var generation: Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return changes
+        }
+
+        struct Stamp: Equatable { let modified: Date; let size: Int }
+
+        func records(at url: URL) -> [BuildRecord] {
+            guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let modified = values.contentModificationDate else { return [] }
+            let stamp = Stamp(modified: modified, size: values.fileSize ?? 0)
+            lock.lock()
+            if let entry = entries[url.path], entry.stamp == stamp {
+                lock.unlock()
+                return entry.records
+            }
+            lock.unlock()
+            let parsed = XcodeBuilds.records(fromManifestAt: url)
+            lock.lock()
+            entries[url.path] = (stamp, parsed)
+            changes += 1
+            lock.unlock()
+            return parsed
+        }
     }
 
     static func records(fromManifestAt url: URL) -> [BuildRecord] {

@@ -277,6 +277,38 @@ with `onlineMeeting.joinUrl`, and merges into the agenda (same title ±60 s = on
 the one with a link). The user supplies the app registration's client ID (Settings). Open: a
 shipped default client ID and publisher verification, for one-click sign-in.
 
+### Phase 13 — Agents: live coding-agent sessions (2026-10-02) ✅ (step A1: Claude Code)
+
+Claude Code hooks → `curl` (async, `|| true`) → `AgentHookServer` (loopback-only NWListener,
+`POST /hook/<agent>`, `X-MyHub-Token`, 1 MB cap, immediate `{}`) → `AgentEvent` (parsed,
+clipped, memory only) → `AgentStore` sessions (working / waiting / done / ended, last 100 steps,
+forgotten after 30 min) → Agents tab, closed-notch pill, finish/attention flash.
+`AgentHookInstaller` merges into `~/.claude/settings.json` (backup `.before-myhub`, idempotent,
+removes only its own entries, refuses invalid JSON).
+A2 ✅ Codex (`~/.codex/hooks.json`, async, trust once via `/hooks`) and Gemini CLI
+(`~/.gemini/settings.json`, inline hook printing `{}`, timeout in ms); `AgentHookInstaller.Target`.
+C ✅ email stashed files (default mail app via the compose service, or Mail.app when the
+`mailto:` handler is a browser). B ✅ approvals: opt-in synchronous `PermissionRequest` command hook (curl prints MyHub's answer),
+`/permission/<agent>` held up to 55 s, `PermissionAnswer` sends once, timeout/dismiss = `{}` (no
+decision → Claude's own prompt); Claude Code only. D ✅ "Ask Claude Code" about stashed files or a
+clicked window (`screencapture -iW`): `ClaudeCodeLauncher` writes a self-deleting 0700 `.command`
+(every value single-quoted) that the default terminal opens: `cd` to the file's folder, `exec claude
+'<question + paths>'`. The user's own CLI and sign-in; MyHub never calls a model.
+D2 ✅ `AskTarget`: Claude Code via its `claude-cli://open?cwd&q` deep link (preferred terminal, prompt
+not sent; `.command` fallback), Codex app via `codex://new?path&prompt`, the Claude app (declares
+all files and folders) and ChatGPT (only when Launch Services lists it for the files) get the files,
+the question on the clipboard. Strict percent-encoding; `q` capped at 5,000.
+
+### Phase 14 — Figma in the Inbox (2026-10-02) ✅
+
+Personal access token (`X-Figma-Token`, Keychain, `api.figma.com` only; scopes `current_user:read`,
+`file_comments:read`, `file_metadata:read`, `file_versions:read`, optional `file_comments:write`).
+No "my files" API, so the user pastes up to 10 file links (`FigmaLink`, keys validated). Each Inbox
+refresh checks comments (+ versions) at most every 5 min; 429 pauses for `Retry-After`. `FigmaInbox`:
+unresolved comments by others in 7 days → mention (`@handle`), reply in a thread the user joined, or
+comment; named versions by others → new version. Rows: 👍, reply (root thread), copy link
+(`/design/<key>?node-id=…#<comment>`). Flash for new mentions/replies/versions after the first check.
+
 ## 8. Risks
 
 | Risk | Mitigation |

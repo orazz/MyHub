@@ -68,6 +68,11 @@ final class ScreenSession {
                 ? CGSize(width: 120, height: 34)
                 : CGSize(width: metrics.notch.width + 130, height: max(metrics.notch.height, 30))
         }
+        if showsAgents {
+            return metrics.position.isSide
+                ? CGSize(width: 14, height: ScreenMetrics.sideStripLength)
+                : CGSize(width: metrics.notch.width + 300, height: max(metrics.notch.height, 30))
+        }
         if showsBadge {
             return metrics.position.isSide
                 ? CGSize(width: 14, height: ScreenMetrics.sideStripLength)
@@ -76,8 +81,11 @@ final class ScreenSession {
         return metrics.collapsedSize
     }
 
+    /// Agents at work (or waiting for the user), and no focus round showing.
+    var showsAgents: Bool { model.agents.showsInNotch && !showsFocus }
+
     /// Unread inbox items and nothing louder on the closed notch.
-    var showsBadge: Bool { model.inbox.badgeCount > 0 && !showsFocus }
+    var showsBadge: Bool { model.inbox.badgeCount > 0 && !showsFocus && !showsAgents }
 
     /// A focus round is running and the closed notch shows its countdown.
     var showsFocus: Bool { model.focus.showsInNotch }

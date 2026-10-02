@@ -27,7 +27,8 @@ struct InboxView: View {
                                     SectionHeader(group: group, count: items.count)
                                     ForEach(items) { item in
                                         InboxRow(item: item, read: inbox.isRead(item),
-                                                 hidden: shield.masks(item.id, in: .inbox)) { inbox.open(item) }
+                                                 hidden: shield.masks(item.id, in: .inbox),
+                                                 figma: item.source == .figma ? inbox.figma : nil, session: session) { inbox.open(item) }
                                     }
                                 }
                             }
@@ -42,9 +43,9 @@ struct InboxView: View {
     private var header: some View {
         HStack(spacing: 10) {
             HubSegmented(
-                options: InboxStore.Filter.allCases.map { ($0, $0.title) },
+                options: inbox.filters.map { ($0, $0.title) },
                 selection: Binding(get: { inbox.filter }, set: { inbox.filter = $0 }),
-                badges: Dictionary(uniqueKeysWithValues: InboxStore.Filter.allCases.map { filter in
+                badges: Dictionary(uniqueKeysWithValues: inbox.filters.map { filter in
                     (filter, inbox.hasLoaded ? "\(count(filter))" : "")
                 })
             )
@@ -86,6 +87,7 @@ struct InboxView: View {
         case .all: inbox.all.count
         case .github: inbox.all.filter { $0.source == .github }.count
         case .jira: inbox.all.filter { $0.source == .jira }.count
+        case .figma: inbox.all.filter { $0.source == .figma }.count
         }
     }
 
@@ -99,12 +101,13 @@ struct InboxView: View {
         VStack(spacing: 10) {
             Image(systemName: "bell.badge").font(.system(size: 24)).foregroundStyle(HubTheme.Palette.accentLight)
             Text(L10n.string("Reviews and mentions, in one place")).font(.system(size: 14, weight: .medium))
-            Text(L10n.string("Add a GitHub token (Dev → Git) for review requests and comments on your pull requests, or connect Jira for mentions."))
+            Text(L10n.string("Add a GitHub token (Dev → Git) for review requests and comments on your pull requests, connect Jira for mentions, or Figma (Settings) for comments on your files."))
                 .font(HubTheme.Font.body).foregroundStyle(Color(hex: 0x7D7E83))
                 .multilineTextAlignment(.center).frame(maxWidth: 380)
             HStack(spacing: 8) {
                 GhostPill(title: L10n.string("GitHub token"), symbol: "key") { goTo(.dev) }
                 GhostPill(title: L10n.string("Connect Jira"), symbol: "rectangle.split.3x1") { goTo(.jira) }
+                GhostPill(title: L10n.string("Connect Figma"), symbol: "pencil.and.outline") { goTo(.settings) }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -130,6 +133,7 @@ extension InboxItem.Group {
         case .needsReview: Color(hex: 0xB79CF2)
         case .reviewsOnYours: HubTheme.Palette.amber
         case .mentions: HubTheme.Palette.blue
+        case .design: Color(hex: 0xC59CF2)
         }
     }
 }
@@ -154,8 +158,17 @@ private struct InboxRow: View {
     let item: InboxItem
     let read: Bool
     let hidden: Bool
+    /// Set for Figma items: reply, react and copy link act through it.
+    var figma: FigmaStore?
+    var session: ScreenSession?
     let open: () -> Void
     @State private var hovering = false
+    @Environment(FormDrafts.self) private var drafts
+    @State private var sending = false
+    @State private var done: String?
+
+    private var replyKey: String { "figma.reply.\(item.id)" }
+    private var replying: Bool { drafts.flag("\(replyKey).open").wrappedValue }
 
     private var title: TaggedTitle { TaggedTitle(item.title) }
 
@@ -187,6 +200,9 @@ private struct InboxRow: View {
                 }
             }
             Spacer(minLength: 6)
+            if figma != nil, hovering || replying || done != nil, !hidden {
+                figmaActions
+            }
             Text(Self.short(item.date))
                 .font(.system(size: 12))
                 .foregroundStyle(HubTheme.Palette.tertiary)
@@ -194,11 +210,74 @@ private struct InboxRow: View {
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if replying, let figma {
+                HStack(spacing: 6) {
+                    PanelField(placeholder: L10n.format("Reply to %@", item.actor), text: drafts.binding(replyKey)) { send(figma) }
+                    if sending { ProgressView().controlSize(.mini) }
+                    GhostPill(title: L10n.string("Send"), symbol: "paperplane") { send(figma) }
+                }
+                .padding(.leading, 56).padding(.trailing, 10).padding(.bottom, 8)
+            }
+        }
         .selectedRow(hovering)
         .contentShape(Rectangle())
-        .onTapGesture(perform: open)
+        .onTapGesture { if !replying { open() } }
         .onHover { hovering = $0 }
-        .help(L10n.string("Open in the browser"))
+        .help(item.source == .figma ? L10n.string("Open in Figma") : L10n.string("Open in the browser"))
+    }
+
+    /// 👍, Reply (comments only) and Copy link.
+    @ViewBuilder
+    private var figmaActions: some View {
+        if let done {
+            Text(done).font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.success)
+        } else if let figma {
+            HStack(spacing: 4) {
+                if item.figma?.commentID != nil {
+                    Button { react(figma) } label: { Text("👍").font(.system(size: 11)) }
+                        .buttonStyle(HubIconButtonStyle(size: 22, filled: true))
+                        .help(L10n.string("React with 👍"))
+                    Button {
+                        drafts.flag("\(replyKey).open").wrappedValue = !replying
+                        if replying { session?.wantsKeyboard = true }
+                    } label: { Image(systemName: "arrowshape.turn.up.left") }
+                        .buttonStyle(HubIconButtonStyle(size: 22, filled: true))
+                        .help(L10n.string("Reply"))
+                }
+                Button {
+                    figma.copyLink(item)
+                    flash(L10n.string("Copied"))
+                } label: { Image(systemName: "link") }
+                    .buttonStyle(HubIconButtonStyle(size: 22, filled: true))
+                    .help(L10n.string("Copy link"))
+            }
+        }
+    }
+
+    private func send(_ figma: FigmaStore) {
+        guard !sending else { return }
+        sending = true
+        Task {
+            let ok = await figma.reply(to: item, text: drafts[replyKey])
+            sending = false
+            if ok {
+                drafts.clear(replyKey, "\(replyKey).open")
+                flash(L10n.string("Sent"))
+            }
+        }
+    }
+
+    private func react(_ figma: FigmaStore) {
+        Task { if await figma.react(to: item) { flash("👍") } }
+    }
+
+    private func flash(_ text: String) {
+        done = text
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            done = nil
+        }
     }
 
     /// The round icon, with the unread dot on its shoulder.
@@ -223,8 +302,10 @@ private struct InboxRow: View {
         case .reviewRequested: ("arrow.triangle.merge", InboxItem.Group.needsReview.color)
         case .approved: ("checkmark", HubTheme.Palette.success)
         case .changesRequested: ("exclamationmark", HubTheme.Palette.danger)
-        case .reviewed, .commented: ("text.bubble", HubTheme.Palette.amber)
+        case .reviewed, .commented: ("text.bubble", item.source == .figma ? InboxItem.Group.design.color : HubTheme.Palette.amber)
         case .mentioned: item.source == .jira ? ("rectangle.split.3x1", HubTheme.Palette.blue) : ("at", HubTheme.Palette.blue)
+        case .replied: ("arrowshape.turn.up.left", InboxItem.Group.design.color)
+        case .newVersion: ("clock.arrow.circlepath", InboxItem.Group.design.color)
         }
     }
 
@@ -236,6 +317,8 @@ private struct InboxRow: View {
         case .changesRequested: return L10n.format("%@ requested changes", item.actor)
         case .reviewed: return L10n.format("%@ reviewed", item.actor)
         case .commented: return L10n.format("%@ commented", item.actor)
+        case .replied: return L10n.format("%@ replied", item.actor)
+        case .newVersion: return L10n.format("%@ saved a version", item.actor)
         case .reviewRequested, .mentioned: return item.actor
         }
     }
@@ -256,7 +339,7 @@ enum InboxRowTime {
     }
 }
 
-/// "feat · sync-api" in the change type's colour, or a ticket key in
+/// "feat · stash" in the change type's colour, or a ticket key in
 /// blue monospace.
 private struct TagChip: View {
     let tag: TaggedTitle.Tag

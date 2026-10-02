@@ -2,7 +2,7 @@ import Foundation
 
 /// One thing that wants the user's attention, from any source.
 struct InboxItem: Identifiable, Equatable, Sendable {
-    enum Source: String, Sendable { case github, jira }
+    enum Source: String, Sendable { case github, jira, figma }
 
     enum Kind: Equatable, Sendable {
         case reviewRequested
@@ -11,6 +11,10 @@ struct InboxItem: Identifiable, Equatable, Sendable {
         case reviewed
         case commented
         case mentioned
+        /// Someone answered in a Figma thread the user is part of.
+        case replied
+        /// A named version was saved on a watched Figma file.
+        case newVersion
 
         var title: String {
             switch self {
@@ -20,6 +24,8 @@ struct InboxItem: Identifiable, Equatable, Sendable {
             case .reviewed: L10n.string("Reviewed")
             case .commented: L10n.string("Commented")
             case .mentioned: L10n.string("Mentioned you")
+            case .replied: L10n.string("Replied")
+            case .newVersion: L10n.string("New version")
             }
         }
     }
@@ -31,13 +37,15 @@ struct InboxItem: Identifiable, Equatable, Sendable {
     let kind: Kind
     /// The pull request, issue or ticket.
     let title: String
-    /// "orazz/orbit #128" or "ORB-142".
+    /// "orbit-labs/orbit #128" or "ORB-142".
     let reference: String
     let actor: String
     /// The comment or review text, when there is one.
     let snippet: String
     let date: Date
     let url: URL
+    /// For Figma items: what reply, react and copy-link act on.
+    var figma: FigmaRef? = nil
 
     /// Newest first; at most one item per id.
     static func merged(_ lists: [[InboxItem]]) -> [InboxItem] {
@@ -162,26 +170,28 @@ enum GitHubInboxDecoding {
 extension InboxItem {
     /// The three sections of the inbox, in the order they are shown.
     enum Group: Int, CaseIterable, Sendable {
-        case needsReview, reviewsOnYours, mentions
+        case needsReview, reviewsOnYours, mentions, design
 
         var title: String {
             switch self {
             case .needsReview: L10n.string("Needs your review")
             case .reviewsOnYours: L10n.string("Reviews on your pull requests")
             case .mentions: L10n.string("Mentions")
+            case .design: L10n.string("Figma")
             }
         }
     }
 
     var group: Group {
-        switch kind {
+        if source == .figma, kind != .mentioned { return .design }
+        return switch kind {
         case .reviewRequested: .needsReview
-        case .approved, .changesRequested, .reviewed, .commented: .reviewsOnYours
+        case .approved, .changesRequested, .reviewed, .commented, .replied, .newVersion: .reviewsOnYours
         case .mentioned: .mentions
         }
     }
 
-    /// "orazz/orbit #128" → "orbit #128"; Jira keys unchanged.
+    /// "orbit-labs/orbit #128" → "orbit #128"; Jira keys unchanged.
     var shortReference: String {
         guard source == .github, let slash = reference.firstIndex(of: "/") else { return reference }
         return String(reference[reference.index(after: slash)...])
@@ -190,7 +200,7 @@ extension InboxItem {
 
 /// A title split into a leading tag and the rest: a conventional-commit
 /// prefix ("feat(api): Make …" → feat · api) or a ticket key
-/// ("[ORB-412] Upgrade sheet" → ORB-412).
+/// ("[ORB-412] Calendar day view" → ORB-412).
 struct TaggedTitle: Equatable, Sendable {
     enum Tag: Equatable, Sendable {
         case change(type: String, scope: String?)

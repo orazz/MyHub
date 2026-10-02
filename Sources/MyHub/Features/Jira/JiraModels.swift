@@ -239,6 +239,25 @@ enum JiraDecoding {
         try JSONDecoder().decode(BoardsDTO.self, from: data).values.map { ($0.id, $0.name, $0.type == "scrum") }
     }
 
+    private struct AgileIssueDTO: Decodable {
+        let fields: Fields
+        struct Fields: Decodable { let sprint: Sprint? }
+        struct Sprint: Decodable { let state: String?; let originBoardId: Int? }
+    }
+
+    private struct BoardDTO: Decodable { let name: String }
+
+    /// The board of the issue's sprint, when that sprint is the active one.
+    static func activeSprintBoard(fromIssue data: Data) throws -> Int? {
+        guard let sprint = try JSONDecoder().decode(AgileIssueDTO.self, from: data).fields.sprint,
+              sprint.state?.lowercased() == "active" else { return nil }
+        return sprint.originBoardId
+    }
+
+    static func boardName(from data: Data) throws -> String {
+        try JSONDecoder().decode(BoardDTO.self, from: data).name
+    }
+
     static func activeSprint(from data: Data) throws -> (id: Int, name: String, start: Date?, end: Date?)? {
         guard let sprint = try JSONDecoder().decode(SprintsDTO.self, from: data).values.first else { return nil }
         return (sprint.id, sprint.name, sprint.startDate.flatMap(JiraDate.parse), sprint.endDate.flatMap(JiraDate.parse))

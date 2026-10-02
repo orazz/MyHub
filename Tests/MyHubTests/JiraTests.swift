@@ -33,6 +33,16 @@ import Testing
 }
 
 @Suite struct JiraDecodingTests {
+    @Test func findsTheBoardOfTheUsersActiveSprint() throws {
+        let active = Data(#"{"key":"ORB-12","fields":{"sprint":{"id":41,"state":"active","name":"Orbit Sprint 9","originBoardId":7}}}"#.utf8)
+        #expect(try JiraDecoding.activeSprintBoard(fromIssue: active) == 7)
+        let future = Data(#"{"key":"ORB-13","fields":{"sprint":{"id":42,"state":"future","name":"Orbit Sprint 10","originBoardId":7}}}"#.utf8)
+        #expect(try JiraDecoding.activeSprintBoard(fromIssue: future) == nil)
+        let none = Data(#"{"key":"ORB-14","fields":{"sprint":null}}"#.utf8)
+        #expect(try JiraDecoding.activeSprintBoard(fromIssue: none) == nil)
+        #expect(try JiraDecoding.boardName(from: Data(#"{"id":7,"name":"Orbit Mobile","type":"scrum"}"#.utf8)) == "Orbit Mobile")
+    }
+
     @Test func searchResultsMapPriorityAndStatus() throws {
         let json = """
         {"issues":[
@@ -68,10 +78,10 @@ import Testing
         {"comments":[
           {"id":"1","author":{"accountId":"ana","displayName":"Ana Kovač"},"created":"2026-10-01T10:00:00.000+0000",
            "body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[
-             {"type":"mention","attrs":{"id":"me","text":"@Oraz"}},{"type":"text","text":" can you check   this on the Studio Display?"}]}]}},
+             {"type":"mention","attrs":{"id":"me","text":"@Robin"}},{"type":"text","text":" can you check   this on the Studio Display?"}]}]}},
           {"id":"2","author":{"accountId":"ana","displayName":"Ana Kovač"},"created":"2026-10-01T10:05:00.000+0000",
            "body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"No mention here"}]}]}},
-          {"id":"3","author":{"accountId":"me","displayName":"Oraz"},"created":"2026-10-01T10:06:00.000+0000",
+          {"id":"3","author":{"accountId":"me","displayName":"Robin"},"created":"2026-10-01T10:06:00.000+0000",
            "body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"id":"me"}}]}]}},
           {"id":"4","author":{"accountId":"marco","displayName":"Marco Ruiz"},"created":"2026-09-01T10:00:00.000+0000",
            "body":{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"mention","attrs":{"id":"me"}}]}]}}
@@ -81,7 +91,7 @@ import Testing
         let since = try #require(ISODate.parse("2026-09-24T00:00:00Z"))
         let mentions = try JiraDecoding.mentions(from: Data(json.utf8), issue: issue, accountID: "me", since: since)
         #expect(mentions.map(\.id) == ["1"])
-        #expect(mentions[0].body == "@Oraz can you check this on the Studio Display?")
+        #expect(mentions[0].body == "@Robin can you check this on the Studio Display?")
         #expect(mentions[0].initials == "AK")
         #expect(mentions[0].issueSummary == "Drag-out flicker")
     }
@@ -110,8 +120,8 @@ import Testing
             #"{"values":[{"id":24,"name":"Sprint 24","startDate":"2026-09-23T08:00:00.000Z","endDate":"2026-10-06T08:00:00.000Z"}]}"#.utf8)))
         #expect(sprint.id == 24 && sprint.end != nil)
         #expect(try JiraDecoding.activeSprint(from: Data(#"{"values":[]}"#.utf8)) == nil)
-        let me = try JiraDecoding.account(from: Data(#"{"accountId":"5b10a","displayName":"Oraz","emailAddress":"x"}"#.utf8))
-        #expect(me == JiraAccount(id: "5b10a", name: "Oraz"))
+        let me = try JiraDecoding.account(from: Data(#"{"accountId":"5b10a","displayName":"Robin","emailAddress":"x"}"#.utf8))
+        #expect(me == JiraAccount(id: "5b10a", name: "Robin"))
     }
 
     @Test func repliesBecomeADFParagraphs() throws {

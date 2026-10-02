@@ -109,7 +109,7 @@ struct PanelSnapshots {
                             color: MicrosoftCalendar.color, calendarTitle: "Microsoft 365", link: teams, provider: "Teams", attendees: 8),
                     Meeting(id: "ms-2", title: "1:1 with Ana", start: base.addingTimeInterval(5 * 3600), end: base.addingTimeInterval(5.5 * 3600),
                             color: MicrosoftCalendar.color, calendarTitle: "Microsoft 365", link: teams, provider: "Teams", attendees: 2),
-                ], account: "Oraz · oraz@example.com")
+                ], account: "Robin · robin@example.com")
             }
             if section == .builds { model.builds.mode = .stats }
             try await render(model: model, session: session, metrics: metrics, name: section.rawValue)
@@ -125,6 +125,7 @@ struct PanelSnapshots {
         try await renderNewTabs(model: model, session: session, metrics: metrics, now: now)
         try await renderJira(model: model, session: session, metrics: metrics, now: now)
         try await renderInbox(model: model, session: session, metrics: metrics, now: now)
+        try await renderAgents(model: model, session: session, metrics: metrics, now: now)
         // Every theme, on a busy tab and on the settings that pick it.
         for theme in PanelTheme.allCases {
             ThemeState.shared.theme = theme
@@ -141,10 +142,10 @@ struct PanelSnapshots {
     }
 
     func renderInbox(model: HubModel, session: ScreenSession, metrics: ScreenMetrics, now: Date) async throws {
-        let pr = URL(string: "https://github.com/orazz/orbit/pull/128")!
-        model.jira.injectForPreview(connection: .connected, account: JiraAccount(id: "me", name: "Oraz"), assigned: [], mentions: [
+        let pr = URL(string: "https://github.com/orbit-labs/orbit/pull/128")!
+        model.jira.injectForPreview(connection: .connected, account: JiraAccount(id: "me", name: "Robin"), assigned: [], mentions: [
             JiraMention(id: "c9", issueKey: "ORB-142", issueSummary: "Drag-out flicker on external displays", author: "Ana Kovač",
-                        authorID: "ana", body: "@Oraz can you check if this repros on the Studio Display too?", created: now.addingTimeInterval(-1500)),
+                        authorID: "ana", body: "@Robin can you check if this repros on the Studio Display too?", created: now.addingTimeInterval(-1500)),
         ], sprint: nil)
         func gh(_ id: String, _ kind: InboxItem.Kind, _ title: String, _ ref: String, _ who: String, _ ago: TimeInterval,
                 _ snippet: String = "") -> InboxItem {
@@ -152,18 +153,33 @@ struct PanelSnapshots {
                       date: now.addingTimeInterval(-ago), url: pr)
         }
         model.inbox.injectForPreview([
-            gh("gh-request-1", .reviewRequested, "feat(sync-api): Make the widget refresh payload optional",
-               "orbit-labs/graph-schema #338", "maya-k", 57 * 60),
-            gh("gh-request-2", .reviewRequested, "Route ticket lookups through the parser",
-               "orbit-labs/team-skills #29", "jdoe", 14 * 3600),
-            gh("gh-request-3", .reviewRequested, "ORB-412 Upgrade sheet", "orbit-labs/orbit-ios #1518", "sam-r", 17 * 3600),
-            gh("gh-request-4", .reviewRequested, "Add analytics event table", "orbit-labs/team-skills #28", "lee-park", 18 * 3600),
-            gh("gh-review-5", .changesRequested, "fix(auth): Move nonce handling into the auth service", "orazz/orbit #128", "ana",
+            gh("gh-request-1", .reviewRequested, "feat(stash): Keep drag order when files are renamed",
+               "orbit-labs/orbit-web #64", "kai-m", 57 * 60),
+            gh("gh-request-2", .reviewRequested, "Cache weather tiles for offline mode",
+               "orbit-labs/orbit-api #211", "ines-p", 14 * 3600),
+            gh("gh-request-3", .reviewRequested, "ORB-412 Calendar day view", "orbit-labs/orbit-mac #93", "noor-a", 17 * 3600),
+            gh("gh-request-4", .reviewRequested, "Add dark mode to the onboarding flow", "orbit-labs/orbit-web #61", "theo-b", 18 * 3600),
+            gh("gh-review-5", .changesRequested, "fix(auth): Move nonce handling into the auth service", "orbit-labs/orbit #128", "ana",
                3 * 3600, "Please keep the nonce out of the view model."),
         ])
+        let key = "AbC123xyZ456qwe"
+        func fig(_ id: String, _ kind: InboxItem.Kind, _ title: String, _ ref: String, _ who: String, _ ago: TimeInterval,
+                 _ snippet: String = "") -> InboxItem {
+            InboxItem(id: id, source: .figma, kind: kind, title: title, reference: ref, actor: who, snippet: snippet,
+                      date: now.addingTimeInterval(-ago), url: FigmaLink.web(key: key)!,
+                      figma: FigmaRef(fileKey: key, threadID: kind == .newVersion ? nil : "1", commentID: kind == .newVersion ? nil : id, nodeID: nil))
+        }
+        model.figma.injectForPreview([
+            fig("figma-c-7", .mentioned, "Orbit Checkout", "Figma", "Ines Park", 40 * 60, "@Robin can you check the empty state?"),
+            fig("figma-c-8", .replied, "Orbit Checkout", "Figma", "Kai Moss", 2 * 3600, "Fixed the header spacing, take a look"),
+            fig("figma-v-9", .newVersion, "Checkout v3", "Orbit Checkout", "Kai Moss", 5 * 3600, "New totals row"),
+        ], me: FigmaUser(id: "100", handle: "Robin"))
         model.inbox.markRead([gh("gh-request-3", .reviewRequested, "", "", "", 0), gh("gh-request-4", .reviewRequested, "", "", "", 0)])
         model.section = .inbox
         try await render(model: model, session: session, metrics: metrics, name: "inbox")
+        model.inbox.filter = .figma
+        try await render(model: model, session: session, metrics: metrics, name: "inbox-figma")
+        model.inbox.filter = .all
         model.showsTabKeys = true
         try await render(model: model, session: session, metrics: metrics, name: "inbox-tab-keys")
         model.showsTabKeys = false
@@ -172,10 +188,49 @@ struct PanelSnapshots {
         session.isOpen = true
     }
 
+    func renderAgents(model: HubModel, session: ScreenSession, metrics: ScreenMetrics, now: Date) async throws {
+        func step(_ id: Int, _ tool: String, _ input: [String: Any], _ ago: TimeInterval, _ ok: Bool?) -> AgentSession.Step {
+            AgentSession.Step(id: id, step: AgentStep(tool: tool, input: input), date: now.addingTimeInterval(-ago), succeeded: ok)
+        }
+        var working = AgentSession(agent: "claude", sessionID: "s1", project: "Orbit", cwd: "/Users/me/Code/Orbit",
+                                   started: now.addingTimeInterval(-900), lastEvent: now, turnStarted: now.addingTimeInterval(-140))
+        working.prompt = "Fix the keychain race on wake and add a test"
+        working.steps = [
+            step(1, "Grep", ["pattern": "SecItemCopyMatching"], 130, true),
+            step(2, "Read", ["file_path": "/Users/me/Code/Orbit/Keychain.swift"], 120, true),
+            step(3, "Edit", ["file_path": "/Users/me/Code/Orbit/Keychain.swift"], 80, true),
+            step(4, "Write", ["file_path": "/Users/me/Code/Orbit/KeychainTests.swift"], 40, true),
+            step(5, "Bash", ["command": "swift test --filter Keychain"], 6, nil),
+        ]
+        var waiting = AgentSession(agent: "codex", sessionID: "s2", project: "website", cwd: "/Users/me/Code/website",
+                                   started: now.addingTimeInterval(-600), lastEvent: now.addingTimeInterval(-30), turnStarted: now.addingTimeInterval(-300))
+        waiting.state = .waiting("Approve: npm run deploy")
+        var done = AgentSession(agent: "gemini", sessionID: "s3", project: "docs", cwd: "/Users/me/Code/docs",
+                                started: now.addingTimeInterval(-3600), lastEvent: now.addingTimeInterval(-1200), turnStarted: now.addingTimeInterval(-1500))
+        done.state = .done
+        model.agents.injectForPreview([], connected: [])
+        model.section = .agents
+        try await render(model: model, session: session, metrics: metrics, name: "agents-setup")
+        model.agents.injectForPreview([working, waiting, done])
+        try await render(model: model, session: session, metrics: metrics, name: "agents")
+        model.focus.injectForPreview(FocusCycle())
+        session.isOpen = false
+        try await render(model: model, session: session, metrics: metrics, name: "closed-agents")
+        session.isOpen = true
+        let request = AgentApproval.parse(Data(#"{"session_id":"s1","cwd":"/Users/me/Code/Orbit","tool_name":"Bash","tool_input":{"command":"npm run deploy -- --env production"}}"#.utf8),
+                                          agent: "claude", now: now)!
+        model.agents.injectForPreview([working], approvals: [request])
+        try await render(model: model, session: session, metrics: metrics, name: "agents-approval")
+        session.isOpen = false
+        try await render(model: model, session: session, metrics: metrics, name: "closed-approval")
+        session.isOpen = true
+        model.agents.injectForPreview([])
+    }
+
     /// The nine states of the Jira handoff.
     func renderJira(model: HubModel, session: ScreenSession, metrics: ScreenMetrics, now: Date) async throws {
         let jira = model.jira
-        let me = JiraAccount(id: "me", name: "Oraz")
+        let me = JiraAccount(id: "me", name: "Robin")
         let issues = [
             JiraIssue(key: "ORB-142", summary: "Drag-out flicker on external displays", priority: .high, status: .inProgress, updated: now),
             JiraIssue(key: "ORB-138", summary: "Clipboard search ignores pinned items", priority: .medium, status: .inReview, updated: now),
@@ -219,23 +274,23 @@ struct PanelSnapshots {
             SimDevice(udid: "33333333-3333-3333-3333-333333333333", name: "iPhone 16 Pro", runtime: "iOS 18.2", isBooted: true),
             SimDevice(udid: "55555555-5555-5555-5555-555555555555", name: "iPad Air 13-inch", runtime: "iOS 18.2", isBooted: true),
         ])
-        let repo = GitHubRepo(remote: "https://github.com/orazz/orbit")!
+        let repo = GitHubRepo(remote: "https://github.com/orbit-labs/orbit")!
         var status = GitStatus(); status.branch = "feature/login"; status.ahead = 2; status.changed = 3
         var clean = GitStatus(); clean.branch = "main"
         dev.repos.injectForPreview([
             RepoStore.Repo(path: "/Users/me/Code/orbit", status: status, lastCommit: "Fix keychain race · 2 hours ago", github: repo,
-                           pull: PullRequestInfo(number: 128, title: "Sign in with Apple", url: URL(string: "https://github.com/orazz/orbit/pull/128")!,
+                           pull: PullRequestInfo(number: 128, title: "Sign in with Apple", url: URL(string: "https://github.com/orbit-labs/orbit/pull/128")!,
                                                  draft: false, checks: .pending)),
             RepoStore.Repo(path: "/Users/me/Code/website", status: clean, lastCommit: "Update pricing page · yesterday", github: nil),
         ], runs: [
             WorkflowRun(id: 1, repo: repo, workflow: "CI", title: "Sign in with Apple", branch: "feature/login", event: "push",
-                        state: .pending, url: URL(string: "https://github.com/orazz/orbit/actions/runs/1")!,
+                        state: .pending, url: URL(string: "https://github.com/orbit-labs/orbit/actions/runs/1")!,
                         started: now.addingTimeInterval(-185), updated: now),
             WorkflowRun(id: 2, repo: repo, workflow: "Release", title: "v2.4.0", branch: "main", event: "push",
-                        state: .success, url: URL(string: "https://github.com/orazz/orbit/actions/runs/2")!,
+                        state: .success, url: URL(string: "https://github.com/orbit-labs/orbit/actions/runs/2")!,
                         started: now.addingTimeInterval(-7200), updated: now.addingTimeInterval(-6700)),
             WorkflowRun(id: 3, repo: repo, workflow: "CI", title: "Bump dependencies", branch: "deps", event: "pull_request",
-                        state: .failure, url: URL(string: "https://github.com/orazz/orbit/actions/runs/3")!,
+                        state: .failure, url: URL(string: "https://github.com/orbit-labs/orbit/actions/runs/3")!,
                         started: now.addingTimeInterval(-86400), updated: now.addingTimeInterval(-86000)),
         ])
         dev.cleanup.injectForPreview(["derived": 14_200_000_000, "devicesupport": 6_100_000_000, "simdevices": 22_400_000_000,
@@ -267,7 +322,7 @@ struct PanelSnapshots {
 
         model.snippets.add()
         model.snippets.update(model.snippets.selectedID!, title: "Bug report reply",
-                              body: "Thanks for the report! I've reproduced it on {{date}} and a fix is on the way.\n\n— Oraz")
+                              body: "Thanks for the report! I've reproduced it on {{date}} and a fix is on the way.\n\n— Robin")
         model.notesMode = .snippets
         model.section = .notes
         try await render(model: model, session: session, metrics: metrics, name: "snippets")

@@ -45,7 +45,7 @@ struct HTTPClient: Sendable {
         }
         guard let http = response as? HTTPURLResponse else { throw UsageError.badResponse("not HTTP") }
         guard data.count <= Self.maxResponseBytes else { throw UsageError.badResponse("response too large") }
-        Log.network.debug("\(request.httpMethod ?? "GET", privacy: .public) \(request.url?.host ?? "", privacy: .public)\(request.url?.path ?? "", privacy: .public) → \(http.statusCode, privacy: .public)")
+        Log.network.debug("\(request.httpMethod ?? "GET", privacy: .public) \(request.url?.host ?? "", privacy: .public)\(request.url?.path ?? "", privacy: .private) → \(http.statusCode, privacy: .public)")
         switch http.statusCode {
         case 200..<300:
             return data

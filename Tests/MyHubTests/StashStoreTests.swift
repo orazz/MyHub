@@ -24,6 +24,30 @@ import Testing
         StashStore(file: store, limit: limit, rendersPreviews: false)
     }
 
+    @Test func onlyFilesCanBeEmailed() throws {
+        let stash = library()
+        let file = try makeFile("Invoice.pdf")
+        let subfolder = folder.appendingPathComponent("Designs", isDirectory: true)
+        try FileManager.default.createDirectory(at: subfolder, withIntermediateDirectories: true)
+        stash.add([file, subfolder])
+        let ids = Set(stash.items.map(\.id))
+        #expect(stash.emailable(ids).map(\.lastPathComponent) == ["Invoice.pdf"])
+        #expect(stash.emailable([]).isEmpty)
+    }
+
+    @Test func theQuestionBarFollowsTheStash() throws {
+        let stash = library()
+        let a = try makeFile("brief.md"), b = try makeFile("mock.png")
+        stash.add([a, b])
+        let ids = stash.items.map(\.id)
+        stash.beginAsking(Set(ids))
+        #expect(stash.askableFiles.map(\.lastPathComponent) == ["brief.md", "mock.png"])
+        stash.remove(ids[0])
+        #expect(stash.askableFiles.map(\.lastPathComponent) == ["mock.png"])
+        stash.cancelAsking()
+        #expect(stash.askingAbout.isEmpty)
+    }
+
     @Test func keepsDropOrderNewestFirstAndDedupes() throws {
         let a = try makeFile("a.txt"), b = try makeFile("b.txt"), c = try makeFile("c.txt")
         let stash = library()

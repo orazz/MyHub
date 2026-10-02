@@ -111,7 +111,9 @@ private struct TimerCard: View {
                 Rectangle()
                     .fill(cycle.phase.color)
                     .frame(width: size.width * cycle.progress(at: now, lengths: lengths), height: 3)
-                    .animation(.linear(duration: 1), value: cycle.progress(at: now, lengths: lengths))
+                    // No per-second animation: it would keep SwiftUI drawing
+                    // every frame while the timer runs, to move a line by a
+                    // fraction of a point.
             }
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }

@@ -128,6 +128,24 @@ final class Preferences {
         var readMentions: [String] = []
     }
 
+    struct Agents: Codable, Equatable, Sendable {
+        /// Loopback port the hooks post to. Fixed, because it is written into
+        /// the agents' settings files.
+        var port: UInt16 = 47391
+        /// Shared secret the hooks send along; not a credential, it only
+        /// keeps web pages from posting fake events.
+        var token = ""
+        /// A pill on the closed notch while an agent works.
+        var showInNotch = true
+        /// Flash the notch when an agent finishes its turn.
+        var flashOnFinish = true
+        /// Answer Claude Code's permission requests from the notch (adds a
+        /// second, synchronous hook). Off until the user turns it on.
+        var approvals = false
+        /// Open the panel on the Agents tab when a request arrives.
+        var openForApprovals = true
+    }
+
     struct Microsoft: Codable, Equatable, Sendable {
         /// The app registration's Application (client) ID — not a secret.
         var clientID = ""
@@ -139,6 +157,22 @@ final class Preferences {
         /// A quiet unread count on the closed notch.
         var badge = true
         /// GitHub items already opened (ids), newest last.
+        var read: [String] = []
+    }
+
+    struct Figma: Codable, Equatable, Sendable {
+        struct File: Codable, Equatable, Sendable {
+            var key: String
+            var name: String
+        }
+        /// Files whose comments and versions feed the Inbox. The token is in
+        /// the Keychain.
+        var files: [File] = []
+        /// Flash the notch for a new mention or reply.
+        var notifyComments = true
+        /// Flash for a named version, and list versions in the Inbox.
+        var notifyVersions = true
+        /// Items already opened (ids), newest last.
         var read: [String] = []
     }
 
@@ -159,6 +193,8 @@ final class Preferences {
         var jira = Jira()
         var inbox = Inbox()
         var microsoft = Microsoft()
+        var agents = Agents()
+        var figma = Figma()
     }
 
     enum LoadError: Error { case notAnObject }

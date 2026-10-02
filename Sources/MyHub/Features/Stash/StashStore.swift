@@ -119,6 +119,7 @@ final class StashStore {
 
     private func forget(_ ids: Set<UUID>) {
         selection.subtract(ids)
+        askingAbout.removeAll { ids.contains($0) }
         for id in ids {
             previewTasks.removeValue(forKey: id)?.cancel()
             previews.removeValue(forKey: id)
@@ -129,6 +130,7 @@ final class StashStore {
 
     /// Called when the stash comes into view; cheap to call often.
     func refreshIfStale() {
+        canAsk = AskTarget.anyInstalled
         guard refreshTask == nil, Date().timeIntervalSince(lastRefresh) > 3 else { return }
         refreshTask = Task { [weak self] in
             await self?.refresh()
@@ -281,6 +283,123 @@ final class StashStore {
         let urls = items.filter { ids.contains($0.id) }.map(\.url)
         guard !urls.isEmpty else { return }
         NSWorkspace.shared.activateFileViewerSelecting(urls)
+    }
+
+    /// The files among `ids` that can be attached: real files, not folders.
+    func emailable(_ ids: Set<UUID>) -> [URL] {
+        items.filter { ids.contains($0.id) && !$0.url.hasDirectoryPath && $0.size != nil }.map(\.url)
+    }
+
+    /// Mail apps that take attachments from the system's "compose email"
+    /// service. A browser registered for `mailto:` (webmail) can't.
+    static let attachmentMailApps: Set<String> = [
+        "com.apple.mail", "com.microsoft.Outlook", "com.readdle.smartemail-Mac", "it.bloop.airmail2",
+        "com.superhuman.electron", "com.mimestream.Mimestream", "com.postbox-inc.postbox", "com.freron.MailMate",
+    ]
+
+    /// Whether a mail app can take attachments on this Mac.
+    var canEmail: Bool { emailRoute != nil }
+
+    private enum EmailRoute { case defaultApp(NSSharingService), mail(URL) }
+
+    /// The default mail app when it can take attachments; otherwise Mail,
+    /// which ships with macOS and starts a new message for files it opens.
+    private var emailRoute: EmailRoute? {
+        let handler = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "mailto:")!)
+        let handlerID = handler.flatMap { Bundle(url: $0)?.bundleIdentifier }
+        if let handlerID, Self.attachmentMailApps.contains(handlerID), let service = NSSharingService(named: .composeEmail) {
+            return .defaultApp(service)
+        }
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.mail").map(EmailRoute.mail)
+    }
+
+    /// A new email with the files attached. Folders can't be attached, so
+    /// they're left out. Returns false when there's nothing to send.
+    @discardableResult
+    func email(_ ids: Set<UUID>) -> Bool {
+        let files = emailable(ids)
+        guard !files.isEmpty, let route = emailRoute else { return false }
+        // The compose window should come to the front, above other apps.
+        NSApp.activate()
+        switch route {
+        case .defaultApp(let service):
+            guard service.canPerform(withItems: files) else { return false }
+            service.perform(withItems: files)
+        case .mail(let mail):
+            NSWorkspace.shared.open(files, withApplicationAt: mail, configuration: NSWorkspace.OpenConfiguration())
+        }
+        return true
+    }
+
+    // MARK: - Ask AI
+
+    /// The files the question bar is about; empty when it's closed.
+    private(set) var askingAbout: [UUID] = []
+    /// Why the last ask didn't start, shown in the question bar.
+    private(set) var askProblem: String?
+    /// The window picker is up.
+    private(set) var isCapturingWindow = false
+    /// Where the question bar sends to, and the choices this Mac offers for
+    /// the files in it.
+    private(set) var askTarget: AskTarget = .claudeCode
+    private(set) var askTargets: [AskTarget] = []
+    /// Something on this Mac can take a question about files. Checked when
+    /// the stash is shown, not on every redraw.
+    private(set) var canAsk = false
+
+    private static let askTargetKey = "stash.askTarget"
+
+    var askableFiles: [URL] { items.filter { askingAbout.contains($0.id) }.map(\.url) }
+
+    /// Opens the question bar for `ids`, in stash order.
+    func beginAsking(_ ids: Set<UUID>) {
+        askingAbout = items.filter { ids.contains($0.id) }.map(\.id)
+        askProblem = nil
+        askTargets = AskTarget.available(for: askableFiles)
+        let remembered = UserDefaults.standard.string(forKey: Self.askTargetKey).flatMap(AskTarget.init(rawValue:))
+        askTarget = remembered.flatMap { askTargets.contains($0) ? $0 : nil } ?? askTargets.first ?? .claudeCode
+    }
+
+    func chooseAskTarget(_ target: AskTarget) {
+        askTarget = target
+        askProblem = nil
+        UserDefaults.standard.set(target.rawValue, forKey: Self.askTargetKey)
+    }
+
+
+
+    func cancelAsking() {
+        askingAbout = []
+        askProblem = nil
+    }
+
+    /// Sends `question` and the files to the chosen app.
+    func ask(_ question: String) {
+        do {
+            try askTarget.ask(question, about: askableFiles)
+            cancelAsking()
+        } catch ClaudeCodeLauncher.Failure.notInstalled {
+            askProblem = L10n.format("%@ isn't installed.", askTarget.name)
+        } catch {
+            askProblem = L10n.format("Couldn't open %@.", askTarget.name)
+        }
+    }
+
+    /// Lets the user click a window (the system's own picker), adds the
+    /// image to the stash and opens the question bar for it. Esc cancels.
+    func captureWindowToAsk() {
+        guard !isCapturingWindow else { return }
+        isCapturingWindow = true
+        Task {
+            defer { isCapturingWindow = false }
+            let folder = AppPaths.directory("Captures")
+            let target = folder.appendingPathComponent("Window \(UUID().uuidString.prefix(8)).png")
+            // -i interactive, -W start in window mode, -o no shadow, -x no sound.
+            _ = try? await CommandRunner.run("/usr/sbin/screencapture", ["-i", "-W", "-o", "-x", target.path], timeout: .seconds(120))
+            guard FileManager.default.fileExists(atPath: target.path) else { return }
+            add([target])
+            if let item = items.first(where: { $0.url == target.standardizedFileURL }) { beginAsking([item.id]) }
+        }
     }
 
     // MARK: - Persistence

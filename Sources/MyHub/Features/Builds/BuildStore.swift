@@ -42,6 +42,7 @@ final class BuildStore {
     @ObservationIgnored private var sizeTask: Task<Void, Never>?
     @ObservationIgnored private var sizesMeasured: [Platform: Date] = [:]
     @ObservationIgnored private var wasBuilding: [Platform: Date] = [:]
+    @ObservationIgnored private var mergedGeneration = -1
 
     init(preferences: Preferences, historyFile: URL = AppPaths.file("build-history.json")) {
         self.preferences = preferences
@@ -56,15 +57,33 @@ final class BuildStore {
     /// The statistics for the chosen range, without the schemes the user
     /// switched off in the legend.
     func summary(now: Date = Date()) -> BuildStats.Summary {
-        let hidden = Set(preferences.values.builds.hiddenSchemes)
-        return BuildStats.summary(history.records.filter { watched(platform: $0.platform) && !hidden.contains($0.scheme) },
-                                  range: statsRange, now: now)
+        cachedStats(now: now).summary
     }
 
     /// Every scheme with builds in the range, hidden or not, largest first —
     /// the legend's chips, and the order that fixes their colours.
     func schemesInRange(now: Date = Date()) -> [(name: String, seconds: TimeInterval)] {
-        BuildStats.summary(history.records.filter { watched(platform: $0.platform) }, range: statsRange, now: now).schemes
+        cachedStats(now: now).schemes
+    }
+
+    /// The chart is redrawn on every pointer move over its bars; working the
+    /// statistics out again over the whole history each time is wasted. They
+    /// only change with the history, the range, the hidden schemes, the tool
+    /// — or the minute, for "today" and the bucket edges.
+    @ObservationIgnored private var statsCache: (key: String, summary: BuildStats.Summary, schemes: [(name: String, seconds: TimeInterval)])?
+
+    private func cachedStats(now: Date) -> (summary: BuildStats.Summary, schemes: [(name: String, seconds: TimeInterval)]) {
+        let hiddenList = preferences.values.builds.hiddenSchemes
+        let key = [String(history.records.count), history.records.first?.id ?? "", statsRange.rawValue,
+                   hiddenList.joined(separator: "\u{1F}"), tool.rawValue, String(Int(now.timeIntervalSince1970 / 60))]
+            .joined(separator: "|")
+        if let statsCache, statsCache.key == key { return (statsCache.summary, statsCache.schemes) }
+        let hidden = Set(hiddenList)
+        let watchedRecords = history.records.filter { watched(platform: $0.platform) }
+        let summary = BuildStats.summary(watchedRecords.filter { !hidden.contains($0.scheme) }, range: statsRange, now: now)
+        let schemes = hidden.isEmpty ? summary.schemes : BuildStats.summary(watchedRecords, range: statsRange, now: now).schemes
+        statsCache = (key, summary, schemes)
+        return (summary, schemes)
     }
 
     func isSchemeHidden(_ scheme: String) -> Bool {
@@ -161,19 +180,27 @@ final class BuildStore {
             return out
         }.value
 
-        let seen = result.values.flatMap { $0.1 }
-        if self.history.merge(seen) {
+        // Merging builds a set of every stored id; skip it when no Xcode
+        // manifest changed and Gradle isn't watched (its logs aren't cached).
+        let generation = XcodeBuilds.manifestCache.generation
+        let unchanged = generation == mergedGeneration && !watched.contains(.android)
+        mergedGeneration = generation
+        let seen = unchanged ? [] : result.values.flatMap { $0.1 }
+        if !unchanged, self.history.merge(seen) {
             let snapshot = self.history, file = historyFile
             saves.schedule { Task.detached(priority: .utility) { snapshot.save(to: file) } }
             onHistoryChange?()
         }
         let shownPlatform: BuildRecord.Platform = shown == .xcode ? .xcode : .android
-        recent = Array(self.history.records.filter { $0.platform == shownPlatform }.prefix(8))
+        // Assigning an @Observable property re-renders whoever reads it, even
+        // with an equal value; on a 2-second poll that is most of the cost.
+        let freshRecent = Array(self.history.records.lazy.filter { $0.platform == shownPlatform }.prefix(8))
+        if freshRecent != recent { recent = freshRecent }
 
         for (platform, (running, history, daemonCount)) in result {
             if platform == shown {
-                current = running
-                daemons = daemonCount
+                if current != running { current = running }
+                if daemons != daemonCount { daemons = daemonCount }
             }
             if let started = wasBuilding[platform], running == nil {
                 wasBuilding[platform] = nil

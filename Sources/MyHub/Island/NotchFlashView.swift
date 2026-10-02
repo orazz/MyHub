@@ -25,7 +25,9 @@ struct NotchFlashView: View {
 
     var body: some View {
         HStack(spacing: 6) {
+            // A small hop when it appears — a finished agent or build is good news.
             Image(systemName: symbol).foregroundStyle(tint)
+                .symbolEffect(.bounce, value: flash)
             Text(flash.title).lineLimit(1).truncationMode(.tail)
             Spacer(minLength: gap)
             Text(flash.detail).monospacedDigit().foregroundStyle(tint)

@@ -73,6 +73,9 @@ struct SettingsView: View {
                         }
                     }
 
+                    divider(L10n.string("Agents"))
+                    AgentSettings(agents: model.agents)
+
                     divider(L10n.string("Inbox"))
                     row(L10n.string("Unread count on the notch"), isOn: Binding(
                         get: { prefs.inbox.badge }, set: { model.inbox.setBadge($0) }))
@@ -95,7 +98,8 @@ struct SettingsView: View {
                             WrapLayout(spacing: 6) {
                                 Chip(title: L10n.string("Automatic"), isOn: prefs.jira.boardID == nil) { model.jira.setBoard(nil) }
                                 ForEach(model.jira.boards, id: \.id) { board in
-                                    Chip(title: board.name, isOn: prefs.jira.boardID == board.id) { model.jira.setBoard(board.id) }
+                                    Chip(title: model.jira.myBoardIDs.contains(board.id) ? "★ \(board.name)" : board.name,
+                                         isOn: prefs.jira.boardID == board.id) { model.jira.setBoard(board.id) }
                                 }
                             }
                         }
@@ -112,6 +116,9 @@ struct SettingsView: View {
                             }
                         }
                     }
+
+                    divider("Figma")
+                    FigmaSettings(figma: model.figma, session: session)
 
                     divider(L10n.string("Displays"))
                     row(L10n.string("Show on every display"), isOn: Binding(get: { prefs.showOnAllDisplays }, set: { model.setShowOnAllDisplays($0) }))
@@ -291,6 +298,76 @@ private struct MicrosoftSettings: View {
     }
 }
 
+/// Coding agents: the Claude Code hook, the notch pill, the finish flash,
+/// and the loopback port the hooks post to.
+private struct AgentSettings: View {
+    let agents: AgentStore
+    @Environment(FormDrafts.self) private var drafts
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(AgentHookInstaller.Target.all) { target in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(target.name).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+                        Text(agents.isConnected(target) ? L10n.format("Hook in ~/%@", target.settingsPath)
+                             : (target.looksInstalled ? L10n.string("Not connected") : L10n.string("Not found on this Mac")))
+                            .font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.tertiary)
+                    }
+                    Spacer(minLength: 6)
+                    if agents.isConnected(target) {
+                        GhostPill(title: L10n.string("Disconnect"), symbol: "xmark", tint: HubTheme.Palette.danger) { agents.disconnect(target) }
+                    } else {
+                        GhostPill(title: L10n.string("Connect"), symbol: "link") { agents.connect(target) }
+                    }
+                }
+                .frame(height: 44)
+            }
+            Toggle(isOn: Binding(get: { agents.settings.approvals }, set: { agents.setApprovals($0) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L10n.string("Approve Claude Code requests from the notch")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+                    Text(L10n.string("Allow or Deny without the terminal. Unanswered requests go back to Claude Code's own prompt."))
+                        .font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.tertiary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 6)
+            if agents.settings.approvals {
+                Toggle(isOn: Binding(get: { agents.settings.openForApprovals }, set: { agents.setOpenForApprovals($0) })) {
+                    Text(L10n.string("Open the panel when an agent asks")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+                }
+                .frame(height: 37)
+            }
+            Toggle(isOn: Binding(get: { agents.settings.showInNotch }, set: { agents.setShowInNotch($0) })) {
+                Text(L10n.string("Show working agents on the notch")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+            }
+            .frame(height: 37)
+            Toggle(isOn: Binding(get: { agents.settings.flashOnFinish }, set: { agents.setFlashOnFinish($0) })) {
+                Text(L10n.string("Flash when an agent finishes")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+            }
+            .frame(height: 37)
+            HStack(spacing: 6) {
+                Text(L10n.string("Port")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+                Spacer(minLength: 6)
+                PanelField(placeholder: String(agents.settings.port), text: drafts.binding("agents.port")) { savePort() }
+                    .frame(width: 80)
+                if !drafts["agents.port"].isEmpty {
+                    GhostPill(title: L10n.string("Save"), symbol: "checkmark") { savePort() }
+                }
+            }
+            .frame(height: 37)
+            if let problem = agents.problem {
+                Text(problem).font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func savePort() {
+        if let port = UInt16(drafts["agents.port"].trimmingCharacters(in: .whitespaces)) { agents.setPort(port) }
+        drafts.clear("agents.port")
+    }
+}
+
 /// A theme: a small circle of its gradient with its accent, and the name.
 private struct ThemeSwatch: View {
     let theme: PanelTheme
@@ -447,6 +524,103 @@ struct WrapLayout: Layout {
             subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
             x += size.width + spacing
             lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
+/// Figma: a personal access token, then the files to watch (pasted links)
+/// and what to be told about.
+private struct FigmaSettings: View {
+    let figma: FigmaStore
+    let session: ScreenSession
+    @Environment(FormDrafts.self) private var drafts
+    @State private var addProblem: String?
+    @State private var adding = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if figma.connection == .disconnected {
+                connectForm
+            } else {
+                connected
+            }
+            if let problem = figma.problem ?? addProblem {
+                Text(problem).font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.warn)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var connectForm: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(L10n.format("Create a personal access token in Figma (Settings → Security) with the scopes %@, and %@ to reply from the notch.",
+                             FigmaClient.readScopes.joined(separator: ", "), FigmaClient.writeScope))
+                .font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 6) {
+                PanelField(placeholder: L10n.string("Personal access token"), text: drafts.binding("figma.token"), secure: true) { connect() }
+                    .simultaneousGesture(TapGesture().onEnded { session.wantsKeyboard = true })
+                if figma.isConnecting { ProgressView().controlSize(.mini) }
+                GhostPill(title: L10n.string("Connect"), symbol: "link") { connect() }
+            }
+        }
+    }
+
+    private var connected: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(figma.me?.handle ?? L10n.string("Connected"))
+                    .font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+                if figma.connection == .expired {
+                    Text(L10n.string("Token expired")).font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.warn)
+                }
+                Spacer(minLength: 6)
+                GhostPill(title: L10n.string("Disconnect"), symbol: "xmark", tint: HubTheme.Palette.danger) { figma.disconnect() }
+            }
+            .frame(height: 37)
+            ForEach(figma.files, id: \.key) { file in
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.richtext").foregroundStyle(HubTheme.Palette.tertiary)
+                    Text(file.name).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary).lineLimit(1)
+                    Spacer(minLength: 6)
+                    Button { figma.removeFile(file.key) } label: { Image(systemName: "xmark") }
+                        .buttonStyle(HubIconButtonStyle(size: 20))
+                        .help(L10n.string("Stop watching"))
+                }
+                .frame(height: 28)
+            }
+            if figma.files.count < FigmaStore.maxFiles {
+                HStack(spacing: 6) {
+                    PanelField(placeholder: L10n.string("Paste a Figma file link to watch"), text: drafts.binding("figma.link")) { add() }
+                        .simultaneousGesture(TapGesture().onEnded { session.wantsKeyboard = true })
+                    if adding { ProgressView().controlSize(.mini) }
+                    GhostPill(title: L10n.string("Watch"), symbol: "plus") { add() }
+                }
+            }
+            Toggle(isOn: Binding(get: { figma.settings.notifyComments }, set: { figma.setNotifyComments($0) })) {
+                Text(L10n.string("Flash for mentions and replies")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+            }
+            .frame(height: 37)
+            Toggle(isOn: Binding(get: { figma.settings.notifyVersions }, set: { figma.setNotifyVersions($0) })) {
+                Text(L10n.string("New named versions")).font(HubTheme.Font.body).foregroundStyle(HubTheme.Palette.primary)
+            }
+            .frame(height: 37)
+        }
+    }
+
+    private func connect() {
+        Task {
+            if await figma.connect(token: drafts["figma.token"]) { drafts.clear("figma.token") }
+        }
+    }
+
+    private func add() {
+        guard !adding else { return }
+        adding = true
+        Task {
+            addProblem = await figma.addFile(drafts["figma.link"])
+            adding = false
+            if addProblem == nil { drafts.clear("figma.link") }
         }
     }
 }

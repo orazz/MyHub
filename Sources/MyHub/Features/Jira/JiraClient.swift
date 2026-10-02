@@ -60,16 +60,46 @@ struct JiraClient: Sendable {
         return found.sorted { $0.created > $1.created }
     }
 
+    /// The site's boards, first page only. A large site has hundreds, in no
+    /// useful order, so this is the fallback list, not the main one.
     func boards() async throws -> [(id: Int, name: String, scrum: Bool)] {
         try JiraDecoding.boards(from: try await get("/rest/agile/1.0/board", ["maxResults": "50"]))
     }
 
+    static let openSprintJQL = "assignee = currentUser() AND sprint in openSprints() ORDER BY updated DESC"
+
+    /// The boards the user's own work is on: the active sprint of each of
+    /// their open-sprint tickets (Agile "get issue" reports it with its
+    /// board), most recently updated first, without repeats.
+    func myBoardIDs(lookingAt count: Int = 3) async throws -> [Int] {
+        let issues = try await search(Self.openSprintJQL, fields: "summary", limit: count)
+        var boardIDs: [Int] = []
+        for issue in issues {
+            let data = try await get("/rest/agile/1.0/issue/\(issue.key)", ["fields": "sprint"])
+            if let board = try JiraDecoding.activeSprintBoard(fromIssue: data), !boardIDs.contains(board) { boardIDs.append(board) }
+        }
+        return boardIDs
+    }
+
+    /// `myBoardIDs`, with names, for the board picker.
+    func myBoards() async throws -> [(id: Int, name: String)] {
+        var found: [(id: Int, name: String)] = []
+        for id in try await myBoardIDs(lookingAt: 5) {
+            let name = (try? JiraDecoding.boardName(from: await get("/rest/agile/1.0/board/\(id)"))) ?? L10n.format("Board %d", id)
+            found.append((id, name))
+        }
+        return found
+    }
+
     /// The active sprint on `boardID`, or — with no board chosen — on the
-    /// first Scrum board whose active sprint holds one of the user's tickets.
+    /// board of the user's own current sprint; failing that, the first Scrum
+    /// board on the site with one of their tickets in its active sprint.
     func activeSprint(boardID: Int?, account: JiraAccount) async throws -> JiraSprint? {
         let candidates: [Int]
         if let boardID {
             candidates = [boardID]
+        } else if let mine = try? await myBoardIDs(), !mine.isEmpty {
+            candidates = mine
         } else {
             candidates = try await boards().filter(\.scrum).prefix(6).map(\.id)
         }

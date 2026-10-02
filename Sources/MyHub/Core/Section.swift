@@ -4,7 +4,7 @@ import Carbon.HIToolbox
 /// window layer need to know about a section is described here, so adding one
 /// is a new case plus a view — not a hunt through switch statements.
 enum Section: String, CaseIterable, Identifiable, Sendable {
-    case stash, inbox, clipboard, calendar, notes, focus, usage, jira, builds, dev, settings
+    case stash, inbox, agents, clipboard, calendar, notes, focus, usage, jira, builds, dev, settings
 
     var id: String { rawValue }
 
@@ -13,6 +13,7 @@ enum Section: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .stash: "tray"
         case .inbox: "bell"
+        case .agents: "cpu"
         case .clipboard: "doc.on.clipboard"
         case .calendar: "calendar"
         case .notes: "square.and.pencil"
@@ -29,6 +30,7 @@ enum Section: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .stash: L10n.string("Stash")
         case .inbox: L10n.string("Inbox")
+        case .agents: L10n.string("Agents")
         case .clipboard: L10n.string("Clipboard")
         case .calendar: L10n.string("Calendar")
         case .notes: L10n.string("Notes")
@@ -52,6 +54,7 @@ enum Section: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .stash: ("S", kVK_ANSI_S)
         case .inbox: ("I", kVK_ANSI_I)
+        case .agents: ("G", kVK_ANSI_G)
         case .clipboard: ("C", kVK_ANSI_C)
         case .calendar: ("A", kVK_ANSI_A)
         case .notes: ("N", kVK_ANSI_N)
@@ -68,5 +71,5 @@ enum Section: String, CaseIterable, Identifiable, Sendable {
     var canHide: Bool { self != .settings }
 
     /// The tools on the left of the dock; Settings sits alone on the right.
-    static let tools: [Section] = [.stash, .inbox, .clipboard, .calendar, .notes, .focus, .usage, .jira, .builds, .dev]
+    static let tools: [Section] = [.stash, .inbox, .agents, .clipboard, .calendar, .notes, .focus, .usage, .jira, .builds, .dev]
 }

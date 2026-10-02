@@ -52,9 +52,27 @@ description: Security rules for MyHub — Keychain secret storage, reading third
 - Scopes are exactly `offline_access User.Read Calendars.Read`. The refresh token lives in the Keychain (`microsoft.refresh`) and access tokens in memory only. A 400 on refresh means `.expired`, so the user must sign in again.
 - `HTTPClient` allow-list: `login.microsoftonline.com`, `graph.microsoft.com`. Paging links are followed only if they're Graph's own. Join URLs pass `CallLinkDetector.isJoinable`.
 
+## Agent hooks
+- `AgentHookServer` listens on the **loopback interface only**. Every request needs the `X-MyHub-Token` header, compared in constant time. That stops web pages from posting fake events to localhost.
+- Requests: bodies are capped at 1 MB and chunked encoding is refused. Each connection lives at most 5 seconds, and the reply is always an immediate `{}`.
+- Payloads are untrusted. `AgentEvent` clips every string. Prompts and commands stay in memory only, are never written to disk, and are maskable by the Privacy Shield.
+- The installed hook is `curl … || true` with `async: true`. It must never block or fail the agent.
+- **Approvals** (`/permission/<agent>`):
+  - Opt-in, and Claude Code only. Nothing is decided without a click on Allow or Deny.
+  - Timeout, dismissing, MyHub not running, or approvals switched off all mean "no decision" (`{}`), and the agent shows its own prompt.
+  - `PermissionAnswer` sends once.
+  - Never add auto-allow rules.
+- Editing agents' settings files goes only through `AgentHookInstaller`: it keeps a backup, never writes invalid JSON, and touches only its own entries.
+
 ## Jira
 - Sites must be `<name>.atlassian.net` (`JiraSite`). The email+API token pair is sent only to that host (`HTTPClient` allow-list) as Basic auth. The token lives in the Keychain (account `jira`) and is stored only after `/myself` accepts it.
 - Issue keys from responses are pattern-checked (`JiraClient.isIssueKey`) before they go into a URL path. Links are opened only if `JiraSite.owns(url)`.
+
+## Figma
+- Personal access token in the Keychain (`figma`), sent only as `X-Figma-Token` to `api.figma.com`; no redirects.
+- File keys, node ids and comment ids are validated before they reach a URL; inbox items open only `https://www.figma.com`.
+- Comment text is untrusted: one line, clipped, never rendered as Markdown or HTML.
+- Rate limits are per seat (View: 5/min on comments and versions): check at most every 5 min, honour `Retry-After`.
 
 ## Files
 - `~/Library/Application Support/MyHub/` gets 0700. Files are written with `.atomic`, then `FileManager.setAttributes([.posixPermissions: 0o600])`.

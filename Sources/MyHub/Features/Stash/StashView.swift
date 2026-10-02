@@ -11,6 +11,7 @@ import SwiftUI
 struct StashView: View {
     let stash: StashStore
     let session: ScreenSession
+    var onFormActive: (Bool) -> Void = { _ in }
     @State private var shareAnchor = ShareAnchor()
 
     private static let gap: CGFloat = 8
@@ -21,10 +22,15 @@ struct StashView: View {
 
     var body: some View {
         if stash.items.isEmpty {
-            EmptyStash(targeted: session.isDropTarget)
+            EmptyStash(targeted: session.isDropTarget, canAsk: stash.canAsk,
+                       capturing: stash.isCapturingWindow) { stash.captureWindowToAsk() }
         } else {
             VStack(spacing: 10) {
-                header
+                if stash.askingAbout.isEmpty {
+                    header
+                } else {
+                    AskBar(stash: stash, session: session, onFormActive: onFormActive)
+                }
                 GeometryReader { proxy in
                     let layout = Self.layout(for: proxy.size, count: stash.items.count + 1)
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -68,6 +74,12 @@ struct StashView: View {
             .monospacedDigit()
             Spacer()
             if !stash.selection.isEmpty {
+                if stash.canAsk {
+                    GhostPill(title: L10n.string("Ask AI"), symbol: "sparkles") { stash.beginAsking(stash.selection) }
+                }
+                if stash.canEmail {
+                    GhostPill(title: L10n.string("Email"), symbol: "envelope") { stash.email(stash.selection) }
+                }
                 GhostPill(title: L10n.string("Copy"), symbol: "doc.on.doc") { stash.copy(stash.selection) }
                 GhostPill(title: L10n.string("Deselect"), symbol: "xmark") { stash.clearSelection() }
             }
@@ -76,6 +88,11 @@ struct StashView: View {
                 shareAnchor.share(stash.items.filter { ids.contains($0.id) }.map(\.url))
             }
             .background(ShareAnchorView(anchor: shareAnchor))
+            if stash.selection.isEmpty, stash.canAsk {
+                GhostPill(title: L10n.string("Window"), symbol: "macwindow") { stash.captureWindowToAsk() }
+                    .help(L10n.string("Click a window to ask AI about it"))
+                    .disabled(stash.isCapturingWindow)
+            }
             GhostPill(title: L10n.string("Clear"), symbol: "trash") { stash.clear() }
         }
         .frame(height: 26)
@@ -126,14 +143,26 @@ private struct StashTile: View {
             }
         }
         .overlay(alignment: .topLeading) {
-            if hovering, item.isImage {
+            if hovering {
                 HStack(spacing: 4) {
-                    Button { ImageTools.annotate(item.url) } label: { Image(systemName: "pencil.tip.crop.circle") }
-                        .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
-                        .help(L10n.string("Annotate in Preview"))
-                    Button { copyAtOneX() } label: { Text("1x").font(.system(size: 9, weight: .bold)) }
-                        .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
-                        .help(L10n.string("Copy at 1x (half the pixels of a Retina screenshot)"))
+                    if stash.canAsk {
+                        Button { stash.beginAsking([item.id]) } label: { Image(systemName: "sparkles") }
+                            .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
+                            .help(L10n.string("Ask AI"))
+                    }
+                    if stash.canEmail, item.size != nil {
+                        Button { stash.email([item.id]) } label: { Image(systemName: "envelope") }
+                            .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
+                            .help(L10n.string("Email"))
+                    }
+                    if item.isImage {
+                        Button { ImageTools.annotate(item.url) } label: { Image(systemName: "pencil.tip.crop.circle") }
+                            .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
+                            .help(L10n.string("Annotate in Preview"))
+                        Button { copyAtOneX() } label: { Text("1x").font(.system(size: 9, weight: .bold)) }
+                            .buttonStyle(HubIconButtonStyle(size: 20, filled: true))
+                            .help(L10n.string("Copy at 1x (half the pixels of a Retina screenshot)"))
+                    }
                 }
                 .padding(6)
                 .transition(.opacity)
@@ -186,6 +215,13 @@ private struct StashTile: View {
         menu.addItem(ActionMenuItem(L10n.string("Open"), symbol: "arrow.up.forward.app") { stash.open(item.id) })
         menu.addItem(ActionMenuItem(L10n.string("Show in Finder"), symbol: "folder") { stash.reveal(ids) })
         menu.addItem(ActionMenuItem(L10n.string("Copy"), symbol: "doc.on.doc") { stash.copy(ids) })
+        if stash.canAsk {
+            menu.addItem(ActionMenuItem(L10n.string("Ask AI…"), symbol: "sparkles") { stash.beginAsking(ids) })
+        }
+        if stash.canEmail {
+            menu.addItem(ActionMenuItem(ids.count > 1 ? L10n.format("Email %d Files", ids.count) : L10n.string("Email"),
+                                        symbol: "envelope") { stash.email(ids) })
+        }
         if item.isImage {
             menu.addItem(ActionMenuItem(L10n.string("Annotate in Preview"), symbol: "pencil.tip.crop.circle") { ImageTools.annotate(item.url) })
             menu.addItem(ActionMenuItem(L10n.string("Copy at 1x"), symbol: "photo") { copyAtOneX() })
@@ -193,6 +229,77 @@ private struct StashTile: View {
         menu.addItem(.separator())
         menu.addItem(ActionMenuItem(L10n.string("Remove from Stash"), symbol: "xmark") { ids.forEach(stash.remove) })
         return menu
+    }
+}
+
+/// "Ask … about …": a question and the files, sent to Claude Code, Codex,
+/// Claude or ChatGPT — whichever this Mac has.
+private struct AskBar: View {
+    let stash: StashStore
+    let session: ScreenSession
+    let onFormActive: (Bool) -> Void
+    @State private var question = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            targetMenu
+            TextField("", text: $question, prompt: Text(placeholder).foregroundStyle(HubTheme.Palette.tertiary))
+                .textFieldStyle(.plain)
+                .font(HubTheme.Font.body)
+                .foregroundStyle(HubTheme.Palette.primary)
+                .focused($focused)
+                .onSubmit { stash.ask(question) }
+                .onExitCommand { stash.cancelAsking() }
+            if let problem = stash.askProblem {
+                Text(problem).font(HubTheme.Font.meta).foregroundStyle(HubTheme.Palette.warn).lineLimit(1).fixedSize()
+            }
+            GhostPill(title: L10n.string("Ask"), symbol: "return") { stash.ask(question) }
+            Button { stash.cancelAsking() } label: { Image(systemName: "xmark") }
+                .buttonStyle(HubIconButtonStyle(size: 22))
+                .help(L10n.string("Cancel"))
+        }
+        .padding(.leading, 10)
+        .padding(.trailing, 2)
+        .frame(height: 26)
+        .background(Capsule().fill(HubTheme.Palette.selected))
+        .onAppear {
+            onFormActive(true)
+            session.wantsKeyboard = true
+            focused = true
+        }
+        .onDisappear { onFormActive(false) }
+    }
+
+    /// Which app gets the question; only what's on this Mac.
+    private var targetMenu: some View {
+        Menu {
+            ForEach(stash.askTargets, id: \.self) { target in
+                Button { stash.chooseAskTarget(target) } label: {
+                    Label(target.name, systemImage: target == stash.askTarget ? "checkmark" : target.symbol)
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "sparkles").font(.system(size: 11))
+                Text(stash.askTarget.name).font(HubTheme.Font.meta).lineLimit(1).fixedSize()
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(HubTheme.Palette.accentLight)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(stash.askTargets.count < 2)
+    }
+
+    private var placeholder: String {
+        let files = stash.askableFiles
+        let about = files.count == 1 ? files[0].lastPathComponent : L10n.format("%d files", files.count)
+        return stash.askTarget.takesQuestion
+            ? L10n.format("Ask %@ about %@", stash.askTarget.name, about)
+            : L10n.format("Question to paste in %@ (optional)", stash.askTarget.name)
     }
 }
 
@@ -218,6 +325,9 @@ private struct DropSlot: View {
 /// No files: one full-size drop zone.
 private struct EmptyStash: View {
     let targeted: Bool
+    let canAsk: Bool
+    let capturing: Bool
+    let captureWindow: () -> Void
 
     var body: some View {
         VStack(spacing: 12) {
@@ -236,6 +346,10 @@ private struct EmptyStash: View {
                     .foregroundStyle(Color(hex: 0x7D7E83))
             }
             .multilineTextAlignment(.center)
+            if canAsk {
+                GhostPill(title: L10n.string("Ask AI about a window"), symbol: "macwindow", action: captureWindow)
+                    .disabled(capturing)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(DropZoneBackground(radius: HubTheme.Radius.dropZone, targeted: targeted))

@@ -3,7 +3,8 @@ import Observation
 
 /// The Inbox tab and the quiet badge on the closed notch: GitHub review
 /// requests, reviews and comments on the user's pull requests, mentions, and
-/// Jira mentions — newest first, unread until opened.
+/// Jira mentions, and Figma comments and versions on watched files — newest
+/// first, unread until opened.
 ///
 /// Refreshes when the tab is shown and every 3 minutes while it is. With the
 /// notch badge on, it also checks every 10 minutes in the background so the
@@ -13,13 +14,14 @@ import Observation
 @Observable
 final class InboxStore {
     enum Filter: String, CaseIterable, Sendable {
-        case all, github, jira
+        case all, github, jira, figma
 
         var title: String {
             switch self {
             case .all: L10n.string("All")
             case .github: "GitHub"
             case .jira: "Jira"
+            case .figma: "Figma"
             }
         }
     }
@@ -34,13 +36,15 @@ final class InboxStore {
 
     @ObservationIgnored private let preferences: Preferences
     @ObservationIgnored private let jira: JiraStore
+    @ObservationIgnored let figma: FigmaStore
     @ObservationIgnored private var visibleLoop: Task<Void, Never>?
     @ObservationIgnored private var backgroundLoop: Task<Void, Never>?
     @ObservationIgnored private var started = false
 
-    init(preferences: Preferences, jira: JiraStore) {
+    init(preferences: Preferences, jira: JiraStore, figma: FigmaStore) {
         self.preferences = preferences
         self.jira = jira
+        self.figma = figma
     }
 
     // MARK: - Items
@@ -55,13 +59,21 @@ final class InboxStore {
         }
     }
 
-    var all: [InboxItem] { InboxItem.merged([github, jiraItems]) }
+    private var figmaItems: [InboxItem] { figma.connection == .connected ? figma.items : [] }
+
+    var all: [InboxItem] { InboxItem.merged([github, jiraItems, figmaItems]) }
+
+    /// Filters with something behind them; Figma only once it's connected.
+    var filters: [Filter] {
+        Filter.allCases.filter { $0 != .figma || figma.connection != .disconnected }
+    }
 
     var visible: [InboxItem] {
         switch filter {
         case .all: all
         case .github: github
         case .jira: jiraItems
+        case .figma: figmaItems
         }
     }
 
@@ -69,6 +81,7 @@ final class InboxStore {
         switch item.source {
         case .github: preferences.values.inbox.read.contains(item.id)
         case .jira: preferences.values.jira.readMentions.contains(String(item.id.dropFirst("jira-".count)))
+        case .figma: figma.isRead(item)
         }
     }
 
@@ -79,11 +92,12 @@ final class InboxStore {
         case .all: unreadCount
         case .github: github.filter { !isRead($0) }.count
         case .jira: jiraItems.filter { !isRead($0) }.count
+        case .figma: figmaItems.filter { !isRead($0) }.count
         }
     }
 
     /// Whether any source is set up; without one the tab explains what to do.
-    var hasSources: Bool { hasGitHubToken || jira.connection == .connected }
+    var hasSources: Bool { hasGitHubToken || jira.connection == .connected || figma.connection == .connected }
 
     /// Shown on the closed notch.
     var badgeCount: Int { preferences.values.inbox.badge ? unreadCount : 0 }
@@ -149,6 +163,7 @@ final class InboxStore {
         let token = GitHubClient.storedToken()
         hasGitHubToken = token != nil
         async let jiraDone: Void = jira.refreshForInbox()
+        async let figmaDone: Void = figma.refreshForInbox()
         if token != nil {
             do {
                 github = try await GitHubClient(token: token).inbox()
@@ -164,6 +179,7 @@ final class InboxStore {
             github = []
         }
         await jiraDone
+        await figmaDone
         hasLoaded = true
         lastUpdated = Date()
         pruneReadState()
@@ -184,6 +200,7 @@ final class InboxStore {
         let safe: Bool = switch item.source {
         case .github: GitHubDecoding.safeWebURL(item.url.absoluteString) != nil
         case .jira: jira.site?.owns(item.url) == true
+        case .figma: FigmaLink.isSafeWebURL(item.url)
         }
         if safe { NSWorkspace.shared.open(item.url) }
     }
@@ -192,6 +209,7 @@ final class InboxStore {
         let githubIDs = items.filter { $0.source == .github }.map(\.id).filter { !preferences.values.inbox.read.contains($0) }
         if !githubIDs.isEmpty { preferences.update { $0.inbox.read = Array(($0.inbox.read + githubIDs).suffix(500)) } }
         jira.markRead(items.filter { $0.source == .jira }.map { String($0.id.dropFirst("jira-".count)) })
+        figma.markRead(items)
     }
 
     func markAllRead() { markRead(visible) }

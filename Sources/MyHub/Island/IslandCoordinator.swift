@@ -29,6 +29,7 @@ final class IslandCoordinator {
             )
             self?.screens.values.forEach { $0.showFlash(flash) }
         }
+        model.onOpenRequest = { [weak self] section in self?.openPanel(on: section) }
         model.onFlash = { [weak self] flash in
             self?.screens.values.forEach { $0.showFlash(flash) }
         }

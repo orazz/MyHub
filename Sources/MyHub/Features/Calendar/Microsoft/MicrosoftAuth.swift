@@ -144,7 +144,8 @@ final class LoopbackRedirect: @unchecked Sendable {
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .loopback
         parameters.acceptLocalOnly = true
-        let listener = try NWListener(using: parameters, on: .any)
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        let listener = try NWListener(using: parameters)
         let redirect = LoopbackRedirect(listener: listener)
         try await withCheckedThrowingContinuation { (ready: CheckedContinuation<Void, Error>) in
             let once = OnceFlag()
@@ -162,7 +163,7 @@ final class LoopbackRedirect: @unchecked Sendable {
     }
 
     var port: UInt16 { listener.port?.rawValue ?? 0 }
-    var redirectURI: String { "http://localhost:\(port)" }
+    var redirectURI: String { "http://127.0.0.1:\(port)" }
 
     /// The query string of the first request, or an error after `timeout`.
     func waitForCallback(timeout: Duration = .seconds(300)) async throws -> String {

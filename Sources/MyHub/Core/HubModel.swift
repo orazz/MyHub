@@ -20,7 +20,9 @@ final class HubModel {
     let shield: ContentShield
     let dev: DevHub
     let jira: JiraStore
+    let figma: FigmaStore
     let inbox: InboxStore
+    let agents: AgentStore
     let focus: FocusStore
     let snippets: SnippetStore
     /// The screen ruler (menu bar, ⌃⌥M).
@@ -72,6 +74,8 @@ final class HubModel {
     @ObservationIgnored var onUsageMeterChange: (() -> Void)?
     @ObservationIgnored private let notifier = UsageNotifier()
     @ObservationIgnored var onDisplayLayoutChange: (() -> Void)?
+    /// Open the island on a section (a permission request from an agent).
+    @ObservationIgnored var onOpenRequest: ((Section) -> Void)?
     /// Collapse every island (after ⏎ in the clipboard).
     @ObservationIgnored var onCollapseRequest: (() -> Void)?
     /// A build ended; the coordinator flashes the closed notch.
@@ -93,7 +97,9 @@ final class HubModel {
         let folder = notesFile.deletingLastPathComponent()
         self.dev = DevHub(preferences: preferences)
         self.jira = JiraStore(preferences: preferences)
-        self.inbox = InboxStore(preferences: preferences, jira: jira)
+        self.figma = FigmaStore(preferences: preferences)
+        self.inbox = InboxStore(preferences: preferences, jira: jira, figma: figma)
+        self.agents = AgentStore(preferences: preferences)
         self.focus = FocusStore(preferences: preferences, file: folder.appendingPathComponent("focus.json"))
         self.snippets = SnippetStore(file: folder.appendingPathComponent("snippets.json"))
         self.preferences = preferences
@@ -121,9 +127,34 @@ final class HubModel {
                 symbol: "checklist"
             ))
         }
+        figma.onNew = { [weak self] item in
+            let title = switch item.kind {
+            case .mentioned: L10n.format("%@ mentioned you", item.actor)
+            case .replied: L10n.format("%@ replied", item.actor)
+            default: L10n.format("New version: %@", item.title)
+            }
+            self?.onFlash?(NotchFlash(success: nil, title: title, detail: item.kind == .newVersion ? item.reference : item.title, symbol: "pencil.and.outline"))
+        }
         jira.onNewMention = { [weak self] mention in
             self?.onFlash?(NotchFlash(success: nil, title: L10n.format("%@ mentioned you", mention.author),
                                       detail: mention.issueKey, symbol: "bubble.left.fill"))
+        }
+        agents.onFinished = { [weak self] session in
+            guard let self, preferences.values.agents.flashOnFinish else { return }
+            onFlash?(NotchFlash(success: true, title: "\(session.agentName) · \(session.project ?? L10n.string("finished"))",
+                                detail: BuildFormat.clock(Date().timeIntervalSince(session.turnStarted))))
+        }
+        agents.onApprovalRequest = { [weak self] approval in
+            guard let self, isVisible(.agents) else { return }
+            if preferences.values.agents.openForApprovals {
+                onOpenRequest?(.agents)
+            } else {
+                onFlash?(NotchFlash(success: nil, title: L10n.format("Approve: %@", approval.step.summary), detail: "",
+                                    symbol: "hand.raised.fill"))
+            }
+        }
+        agents.onNeedsAttention = { [weak self] session, message in
+            self?.onFlash?(NotchFlash(success: nil, title: "\(session.agentName) · \(message)", detail: "", symbol: "hand.raised.fill"))
         }
         focus.onPhaseEnded = { [weak self] ended, next in
             self?.onFlash?(NotchFlash(
@@ -371,6 +402,7 @@ final class HubModel {
         case .stash: stash.refreshIfStale()
         case .calendar: agenda.refreshAccess()
         case .dev: dev.pageShown()
+        case .agents: agents.refreshInstalled()
         case .clipboard, .notes, .usage, .builds, .settings, .focus, .jira, .inbox: break
         }
     }
@@ -411,6 +443,7 @@ final class HubModel {
         case .dev: dev.start()
         case .jira: jira.start()
         case .inbox: inbox.start()
+        case .agents: agents.start()
         case .stash: updateScreenshotWatcher()
         case .notes, .settings: break
         }
@@ -430,6 +463,7 @@ final class HubModel {
         case .dev: dev.stop()
         case .jira: jira.stop()
         case .inbox: inbox.stop()
+        case .agents: agents.stop()
         case .stash: screenshots.stop()
         case .notes, .settings: break
         }

@@ -43,6 +43,8 @@ final class JiraStore {
     private(set) var lastSynced: Date?
     private(set) var problem: String?
     private(set) var boards: [(id: Int, name: String)] = []
+    /// Boards with a sprint the user has tickets in; listed first.
+    private(set) var myBoardIDs: Set<Int> = []
     var selectedIssue = 0
     /// Shown on the connect card.
     var setupVisible = false
@@ -249,8 +251,14 @@ final class JiraStore {
     func loadBoards() {
         guard let client = client() else { return }
         Task { [weak self] in
-            let found = (try? await client.boards()) ?? []
-            self?.boards = found.map { ($0.id, $0.name) }
+            // The user's own boards first; then the site's first page, which
+            // on a big site is mostly other teams'.
+            async let mine = client.myBoards()
+            async let site = client.boards()
+            let own = (try? await mine) ?? []
+            let rest = ((try? await site) ?? []).filter { board in !own.contains { $0.id == board.id } }
+            self?.myBoardIDs = Set(own.map(\.id))
+            self?.boards = own + rest.map { ($0.id, $0.name) }
         }
     }
 

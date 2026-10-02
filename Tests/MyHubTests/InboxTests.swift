@@ -4,16 +4,16 @@ import Testing
 
 @Suite struct InboxDecodingTests {
     let pull = GitHubInboxDecoding.Hit(id: 9, number: 128, title: "Sign in with Apple",
-                                       url: URL(string: "https://github.com/orazz/orbit/pull/128")!,
-                                       repo: GitHubRepo(remote: "https://github.com/orazz/orbit")!, author: "orazz",
+                                       url: URL(string: "https://github.com/orbit-labs/orbit/pull/128")!,
+                                       repo: GitHubRepo(remote: "https://github.com/orbit-labs/orbit")!, author: "robin-v",
                                        updated: Date(), isPullRequest: true)
     let since = ISODate.parse("2026-09-24T00:00:00Z")!
 
     @Test func searchHitsKnowTheirRepoAndRefuseForeignLinks() throws {
         let json = """
         {"total_count":2,"items":[
-          {"id":1,"number":128,"title":"Sign in with Apple","html_url":"https://github.com/orazz/orbit/pull/128",
-           "repository_url":"https://api.github.com/repos/orazz/orbit","updated_at":"2026-10-01T10:00:00Z",
+          {"id":1,"number":128,"title":"Sign in with Apple","html_url":"https://github.com/orbit-labs/orbit/pull/128",
+           "repository_url":"https://api.github.com/repos/orbit-labs/orbit","updated_at":"2026-10-01T10:00:00Z",
            "user":{"login":"ana"},"pull_request":{"url":"x"}},
           {"id":2,"number":5,"title":"Evil","html_url":"https://evil.example/5",
            "repository_url":"https://api.github.com/repos/a/b","updated_at":"2026-10-01T10:00:00Z","user":{"login":"x"}}
@@ -21,7 +21,7 @@ import Testing
         """
         let hits = try GitHubInboxDecoding.hits(from: Data(json.utf8))
         #expect(hits.count == 1)
-        #expect(hits[0].reference == "orazz/orbit #128")
+        #expect(hits[0].reference == "orbit-labs/orbit #128")
         #expect(hits[0].isPullRequest)
         #expect(GitHubInboxDecoding.repo(fromAPI: "https://api.example.com/repos/a/b") == nil)
     }
@@ -29,17 +29,17 @@ import Testing
     @Test func reviewsByOthersOnlyWithTheirVerdict() throws {
         let json = """
         [{"id":1,"user":{"login":"ana"},"state":"APPROVED","body":"LGTM","submitted_at":"2026-10-01T09:00:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#pullrequestreview-1"},
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#pullrequestreview-1"},
          {"id":2,"user":{"login":"marco"},"state":"CHANGES_REQUESTED","body":"> quoted\\nPlease rename this.","submitted_at":"2026-10-01T09:30:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#pullrequestreview-2"},
-         {"id":3,"user":{"login":"Orazz"},"state":"COMMENTED","body":"self","submitted_at":"2026-10-01T09:40:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#pullrequestreview-3"},
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#pullrequestreview-2"},
+         {"id":3,"user":{"login":"Robin-V"},"state":"COMMENTED","body":"self","submitted_at":"2026-10-01T09:40:00Z",
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#pullrequestreview-3"},
          {"id":4,"user":{"login":"ana"},"state":"PENDING","body":"","submitted_at":"2026-10-01T09:50:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#pullrequestreview-4"},
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#pullrequestreview-4"},
          {"id":5,"user":{"login":"ana"},"state":"APPROVED","body":"old","submitted_at":"2026-09-01T09:00:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#pullrequestreview-5"}]
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#pullrequestreview-5"}]
         """
-        let items = try GitHubInboxDecoding.reviews(from: Data(json.utf8), on: pull, me: "orazz", since: since)
+        let items = try GitHubInboxDecoding.reviews(from: Data(json.utf8), on: pull, me: "robin-v", since: since)
         #expect(items.map(\.kind) == [.approved, .changesRequested])
         #expect(items[1].snippet == "Please rename this.")
         #expect(items[0].id == "gh-review-1")
@@ -48,13 +48,13 @@ import Testing
     @Test func commentsSkipMyOwnAndBots() throws {
         let json = """
         [{"id":11,"user":{"login":"ana"},"body":"Can you add a test?","created_at":"2026-10-01T09:00:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#issuecomment-11"},
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#issuecomment-11"},
          {"id":12,"user":{"login":"dependabot[bot]"},"body":"Bump","created_at":"2026-10-01T09:00:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#issuecomment-12"},
-         {"id":13,"user":{"login":"orazz"},"body":"Done","created_at":"2026-10-01T09:00:00Z",
-          "html_url":"https://github.com/orazz/orbit/pull/128#issuecomment-13"}]
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#issuecomment-12"},
+         {"id":13,"user":{"login":"robin-v"},"body":"Done","created_at":"2026-10-01T09:00:00Z",
+          "html_url":"https://github.com/orbit-labs/orbit/pull/128#issuecomment-13"}]
         """
-        let items = try GitHubInboxDecoding.comments(from: Data(json.utf8), on: pull, me: "orazz", since: since)
+        let items = try GitHubInboxDecoding.comments(from: Data(json.utf8), on: pull, me: "robin-v", since: since)
         #expect(items.map(\.actor) == ["ana"])
         #expect(items[0].kind == .commented)
     }
@@ -78,23 +78,23 @@ import Testing
 
 @Suite struct TaggedTitleTests {
     @Test func conventionalCommitPrefixesBecomeChips() {
-        let t = TaggedTitle("feat(sync-api): Make the widget refresh payload optional")
-        #expect(t.tag == .change(type: "feat", scope: "sync-api"))
-        #expect(t.text == "Make the widget refresh payload optional")
+        let t = TaggedTitle("feat(stash): Keep drag order when files are renamed")
+        #expect(t.tag == .change(type: "feat", scope: "stash"))
+        #expect(t.text == "Keep drag order when files are renamed")
         #expect(TaggedTitle("fix!: Crash on launch").tag == .change(type: "fix", scope: nil))
         #expect(TaggedTitle("Note: this is not a type").tag == nil)
     }
 
     @Test func ticketKeysBecomeChips() {
-        #expect(TaggedTitle("ORB-412 Upgrade sheet") == TaggedTitle("[ORB-412] Upgrade sheet"))
-        #expect(TaggedTitle("ORB-412: Upgrade sheet").tag == .ticket("ORB-412"))
-        #expect(TaggedTitle("ORB-412: Upgrade sheet").text == "Upgrade sheet")
-        #expect(TaggedTitle("Add analytics event table").tag == nil)
+        #expect(TaggedTitle("ORB-412 Calendar day view") == TaggedTitle("[ORB-412] Calendar day view"))
+        #expect(TaggedTitle("ORB-412: Calendar day view").tag == .ticket("ORB-412"))
+        #expect(TaggedTitle("ORB-412: Calendar day view").text == "Calendar day view")
+        #expect(TaggedTitle("Add dark mode to the onboarding flow").tag == nil)
     }
 
     @Test func itemsKnowTheirSectionAndShortReference() {
-        let item = InboxItem(id: "x", source: .github, kind: .approved, title: "t", reference: "orazz/orbit #128",
-                             actor: "ana", snippet: "", date: Date(), url: URL(string: "https://github.com/orazz/orbit/pull/128")!)
+        let item = InboxItem(id: "x", source: .github, kind: .approved, title: "t", reference: "orbit-labs/orbit #128",
+                             actor: "ana", snippet: "", date: Date(), url: URL(string: "https://github.com/orbit-labs/orbit/pull/128")!)
         #expect(item.group == .reviewsOnYours)
         #expect(item.shortReference == "orbit #128")
     }
@@ -184,6 +184,17 @@ import Testing
         #expect(model.section == .stash)
         model.setVisible(.inbox, false)
         coordinator.stepTab(by: 1)
-        #expect(model.section == .clipboard)         // hidden Inbox is skipped
+        #expect(model.section == .agents)            // hidden Inbox is skipped
+    }
+}
+
+@Suite struct ProcessScannerTests {
+    @Test func theFastScanNamesProcessesLikeTheirExecutable() throws {
+        let me = getpid()
+        let fast = try #require(ProcessScanner.all().first { $0.pid == me })
+        let full = try #require(ProcessScanner.info(me))
+        #expect(fast.parent == full.parent)
+        #expect(!fast.name.isEmpty)
+        #expect(full.name.hasPrefix(fast.name) || fast.name.hasPrefix(full.name))
     }
 }

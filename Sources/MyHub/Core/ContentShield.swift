@@ -16,7 +16,7 @@ final class ContentShield {
     enum Coverage { case none, some, all }
 
     /// Sections that show personal content and so can be shielded.
-    static let eligible: [Section] = [.inbox, .clipboard, .calendar, .notes, .usage, .jira]
+    static let eligible: [Section] = [.inbox, .agents, .clipboard, .calendar, .notes, .usage, .jira]
 
     private(set) var shielded: Set<Section>
     private(set) var peeked: Set<String> = []
